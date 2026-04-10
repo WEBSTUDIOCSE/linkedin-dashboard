@@ -49,5 +49,5 @@ SKILL.md
 ARCHITECTURE.md
 DESIGN.md
 PROGRESS.md
-ui/
+# ui/ — removed to track shadcn components
 assets/
