@@ -161,7 +161,7 @@ async function uploadImageBinary(uploadUrl: string, accessToken: string, imageBu
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/octet-stream',
     },
-    body: imageBuffer,
+    body: new Uint8Array(imageBuffer),
   });
 
   if (!res.ok) {
