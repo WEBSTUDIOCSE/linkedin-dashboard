@@ -1,13 +1,14 @@
 /**
  * LinkedIn OAuth 2.0 + UGC Posts API helpers
  *
- * Scopes required: r_liteprofile r_emailaddress w_member_social
+ * Scopes required: openid profile w_member_social
  */
 
 const LINKEDIN_AUTH_URL = 'https://www.linkedin.com/oauth/v2/authorization';
 const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken';
 const LINKEDIN_UGC_POSTS_URL = 'https://api.linkedin.com/v2/ugcPosts';
 const LINKEDIN_PROFILE_URL = 'https://api.linkedin.com/v2/userinfo';
+const LINKEDIN_ASSETS_URL = 'https://api.linkedin.com/v2/assets?action=registerUpload';
 
 export interface LinkedInTokenResponse {
   access_token: string;
@@ -43,7 +44,7 @@ export function buildLinkedInAuthUrl(state: string): string {
 
   const params = new URLSearchParams({
     response_type: 'code',
-    client_id: clientId,
+    client_id: clientId!,
     redirect_uri: redirectUri!,
     state,
     scope: 'openid profile w_member_social',
@@ -106,34 +107,131 @@ export async function getLinkedInProfile(accessToken: string): Promise<LinkedInP
 }
 
 /**
- * Publish a text post to LinkedIn via the UGC Posts API.
- *
- * @param accessToken  User's LinkedIn access token
- * @param authorUrn    LinkedIn member URN — e.g. "urn:li:person:ABC123"
- * @param text         Post body text
- * @param pdfUrl       Optional URL to attach as a link (shared article)
+ * Register an image upload with LinkedIn and return the upload URL + asset URN.
+ */
+async function registerImageUpload(
+  accessToken: string,
+  authorUrn: string,
+): Promise<{ uploadUrl: string; assetUrn: string }> {
+  const body = {
+    registerUploadRequest: {
+      recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+      owner: authorUrn,
+      serviceRelationships: [
+        {
+          relationshipType: 'OWNER',
+          identifier: 'urn:li:userGeneratedContent',
+        },
+      ],
+    },
+  };
+
+  const res = await fetch(LINKEDIN_ASSETS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`LinkedIn register upload failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  const uploadUrl = data.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl;
+  const assetUrn = data.value?.asset;
+
+  if (!uploadUrl || !assetUrn) {
+    throw new Error(`LinkedIn register upload returned unexpected format: ${JSON.stringify(data)}`);
+  }
+
+  return { uploadUrl, assetUrn };
+}
+
+/**
+ * Upload a single image binary to LinkedIn's upload URL.
+ */
+async function uploadImageBinary(uploadUrl: string, accessToken: string, imageBuffer: Buffer): Promise<void> {
+  const res = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: imageBuffer,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`LinkedIn image upload failed (${res.status}): ${text}`);
+  }
+}
+
+/**
+ * Upload multiple carousel slide images to LinkedIn.
+ * Returns array of asset URNs in order.
+ */
+export async function uploadCarouselImages(
+  accessToken: string,
+  authorUrn: string,
+  imageBuffers: Buffer[],
+): Promise<string[]> {
+  const assetUrns: string[] = [];
+
+  for (let i = 0; i < imageBuffers.length; i++) {
+    const { uploadUrl, assetUrn } = await registerImageUpload(accessToken, authorUrn);
+    await uploadImageBinary(uploadUrl, accessToken, imageBuffers[i]!);
+    assetUrns.push(assetUrn);
+  }
+
+  return assetUrns;
+}
+
+/**
+ * Publish a post to LinkedIn.
+ * - If carouselImageUrls provided: uploads images as CAROUSEL post
+ * - If pdfUrl provided: posts as ARTICLE with link
+ * - Otherwise: text-only post
  */
 export async function postToLinkedIn(
   accessToken: string,
   authorUrn: string,
   text: string,
-  pdfUrl?: string,
+  options?: {
+    pdfUrl?: string;
+    carouselAssetUrns?: string[];
+  },
 ): Promise<LinkedInPostResult> {
+  const isCarousel = options?.carouselAssetUrns && options.carouselAssetUrns.length > 0;
+  const isArticle = !isCarousel && options?.pdfUrl;
+
+  const media = isCarousel
+    ? options!.carouselAssetUrns!.map((assetUrn, index) => ({
+        status: 'READY',
+        description: { text: `Slide ${index + 1}` },
+        media: assetUrn,
+        title: { text: `Slide ${index + 1}` },
+      }))
+    : isArticle
+      ? [
+          {
+            status: 'READY',
+            originalUrl: options!.pdfUrl,
+          },
+        ]
+      : [];
+
   const body: Record<string, unknown> = {
     author: authorUrn,
     lifecycleState: 'PUBLISHED',
     specificContent: {
       'com.linkedin.ugc.ShareContent': {
         shareCommentary: { text },
-        shareMediaCategory: pdfUrl ? 'ARTICLE' : 'NONE',
-        ...(pdfUrl && {
-          media: [
-            {
-              status: 'READY',
-              originalUrl: pdfUrl,
-            },
-          ],
-        }),
+        shareMediaCategory: isCarousel ? 'CAROUSEL' : isArticle ? 'ARTICLE' : 'NONE',
+        ...(media.length > 0 && { media }),
       },
     },
     visibility: {
@@ -156,7 +254,6 @@ export async function postToLinkedIn(
     throw new Error(`LinkedIn post failed (${res.status}): ${text}`);
   }
 
-  // LinkedIn returns the post ID in the X-RestLi-Id header
   const postId = res.headers.get('x-restli-id') || res.headers.get('X-RestLi-Id') || 'unknown';
   return { id: postId };
 }

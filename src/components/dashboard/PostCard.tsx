@@ -23,6 +23,7 @@ export interface Post {
   postContent?: string;
   hashtags?: string[];
   pdfUrl: string;
+  slideImageUrls?: string[];
   status: 'draft' | 'published' | 'scheduled' | string;
   createdAt: { toDate: () => Date } | Date | string | null;
 }
@@ -85,6 +86,7 @@ export default function PostCard({ post, linkedInConnected }: PostCardProps) {
           postContent: post.postContent || '',
           hashtags: post.hashtags || [],
           pdfUrl: post.pdfUrl,
+          slideImageUrls: post.slideImageUrls || [],
         }),
       });
       const data = (await res.json()) as { success?: boolean; error?: string };
