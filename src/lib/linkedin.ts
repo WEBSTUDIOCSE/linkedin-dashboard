@@ -230,7 +230,7 @@ export async function postToLinkedIn(
     specificContent: {
       'com.linkedin.ugc.ShareContent': {
         shareCommentary: { text },
-        shareMediaCategory: isCarousel ? 'CAROUSEL' : isArticle ? 'ARTICLE' : 'NONE',
+        shareMediaCategory: isCarousel ? 'IMAGE' : isArticle ? 'ARTICLE' : 'NONE',
         ...(media.length > 0 && { media }),
       },
     },
