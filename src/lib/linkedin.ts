@@ -42,7 +42,7 @@ export function buildLinkedInAuthUrl(state: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: clientId,
-    redirect_uri: redirectUri,
+    redirect_uri: redirectUri!,
     state,
     scope: 'r_liteprofile r_emailaddress w_member_social',
   });
@@ -61,11 +61,14 @@ export async function exchangeLinkedInCode(code: string): Promise<LinkedInTokenR
   if (!clientId || !clientSecret) {
     throw new Error('LinkedIn client credentials are not configured');
   }
+  if (!redirectUri) {
+    throw new Error('LINKEDIN_REDIRECT_URI is not configured');
+  }
 
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: redirectUri,
+    redirect_uri: redirectUri!,
     client_id: clientId,
     client_secret: clientSecret,
   });
